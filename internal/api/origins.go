@@ -25,6 +25,9 @@ func ParseAllowedOrigins(raw string) ([]string, error) {
 		if origin == "*" || strings.Contains(origin, "*") {
 			return nil, fmt.Errorf("allowed origin %q must not contain a wildcard", origin)
 		}
+		if strings.ContainsAny(origin, "?#") {
+			return nil, fmt.Errorf("allowed origin %q must not include a query or fragment", origin)
+		}
 
 		parsed, err := url.Parse(origin)
 		if err != nil {
@@ -35,6 +38,9 @@ func ParseAllowedOrigins(raw string) ([]string, error) {
 		}
 		if parsed.Host == "" || parsed.Hostname() == "" {
 			return nil, fmt.Errorf("allowed origin %q must include a host", origin)
+		}
+		if strings.HasSuffix(parsed.Host, ":") {
+			return nil, fmt.Errorf("allowed origin %q must include a valid port", origin)
 		}
 		if parsed.User != nil {
 			return nil, fmt.Errorf("allowed origin %q must not include credentials", origin)

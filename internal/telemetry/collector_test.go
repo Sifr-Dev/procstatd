@@ -206,9 +206,16 @@ type fakeDirEntry struct {
 	err  error
 }
 
-func (entry fakeDirEntry) Name() string               { return entry.name }
-func (entry fakeDirEntry) IsDir() bool                { return entry.info != nil && entry.info.IsDir() }
-func (entry fakeDirEntry) Type() fs.FileMode          { return entry.info.Mode() }
+func (entry fakeDirEntry) Name() string { return entry.name }
+func (entry fakeDirEntry) IsDir() bool {
+	return entry.info != nil && entry.info.IsDir()
+}
+func (entry fakeDirEntry) Type() fs.FileMode {
+	if entry.info == nil {
+		return 0
+	}
+	return entry.info.Mode()
+}
 func (entry fakeDirEntry) Info() (fs.FileInfo, error) { return entry.info, entry.err }
 
 type fakeFileInfo struct {

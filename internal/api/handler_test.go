@@ -112,6 +112,7 @@ func TestTelemetryPreflightRequiresAllowedOrigin(t *testing.T) {
 
 	allowedRequest := httptest.NewRequest(http.MethodOptions, "/api/sysmon", nil)
 	allowedRequest.Header.Set("Origin", "https://portfolio.example")
+	allowedRequest.Header.Set("Access-Control-Request-Method", http.MethodGet)
 	allowedResponse := httptest.NewRecorder()
 	handler.ServeHTTP(allowedResponse, allowedRequest)
 	if allowedResponse.Code != http.StatusNoContent {
@@ -128,6 +129,15 @@ func TestTelemetryPreflightRequiresAllowedOrigin(t *testing.T) {
 	if blockedResponse.Code != http.StatusForbidden {
 		t.Fatalf("blocked preflight status = %d, want %d", blockedResponse.Code, http.StatusForbidden)
 	}
+
+	unsupportedRequest := httptest.NewRequest(http.MethodOptions, "/api/sysmon", nil)
+	unsupportedRequest.Header.Set("Origin", "https://portfolio.example")
+	unsupportedRequest.Header.Set("Access-Control-Request-Method", http.MethodPost)
+	unsupportedResponse := httptest.NewRecorder()
+	handler.ServeHTTP(unsupportedResponse, unsupportedRequest)
+	if unsupportedResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("unsupported preflight status = %d, want %d", unsupportedResponse.Code, http.StatusMethodNotAllowed)
+	}
 }
 
 func TestTelemetryEndpointReportsUnavailableCollector(t *testing.T) {
@@ -142,6 +152,9 @@ func TestTelemetryEndpointReportsUnavailableCollector(t *testing.T) {
 	}
 	if strings.Contains(response.Body.String(), "private procfs failure detail") {
 		t.Fatalf("response exposed internal error: %s", response.Body.String())
+	}
+	if cacheControl := response.Header().Get("Cache-Control"); cacheControl != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", cacheControl)
 	}
 
 	var decoded errorBody
@@ -212,7 +225,10 @@ func TestParseAllowedOriginsRejectsUnsafeValues(t *testing.T) {
 		"https://user@example.com",
 		"https://example.com/path",
 		"https://example.com?query=1",
+		"https://example.com?",
 		"https://example.com#fragment",
+		"https://example.com#",
+		"https://example.com:",
 		"ftp://example.com",
 		"https://example.com,,https://other.example",
 	} {

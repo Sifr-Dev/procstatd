@@ -3,7 +3,9 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -54,13 +56,18 @@ func run(logger *slog.Logger) error {
 		MaxHeaderBytes:    1 << 20,
 	}
 
+	listener, err := net.Listen("tcp", server.Addr)
+	if err != nil {
+		return fmt.Errorf("listen on %s: %w", server.Addr, err)
+	}
+
 	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
 	serverErrors := make(chan error, 1)
 	go func() {
-		logger.Info("system telemetry daemon listening", "address", server.Addr)
-		serverErrors <- server.ListenAndServe()
+		logger.Info("system telemetry daemon listening", "address", listener.Addr().String())
+		serverErrors <- server.Serve(listener)
 	}()
 
 	select {

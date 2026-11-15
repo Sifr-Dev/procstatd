@@ -68,6 +68,7 @@ func NewHandler(collector Collector, options ...Option) http.Handler {
 }
 
 func (handler *Handler) handleTelemetry(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
 	if r.Method == http.MethodOptions {
 		handler.handlePreflight(w, r)
 		return
@@ -94,11 +95,16 @@ func (handler *Handler) handleTelemetry(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	w.Header().Set("Cache-Control", "no-store")
 	writeJSON(w, http.StatusOK, snapshot)
 }
 
 func (handler *Handler) handlePreflight(w http.ResponseWriter, r *http.Request) {
+	if requestedMethod := strings.TrimSpace(r.Header.Get("Access-Control-Request-Method")); requestedMethod != "" && requestedMethod != http.MethodGet {
+		w.Header().Set("Allow", http.MethodGet)
+		writeError(w, http.StatusMethodNotAllowed, statusCodeMethodNotAllowed, "method not allowed")
+		return
+	}
+
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		w.Header().Set("Allow", http.MethodGet)
