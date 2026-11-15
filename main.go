@@ -1,46 +1,94 @@
 package main
 
 import (
-	"encoding/json"
-	"fmt"
-	"math/rand"
+	"context"
+	"errors"
+	"log/slog"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
+
+	"github.com/mohamedsalahi/sysmon_daemon/internal/api"
+	"github.com/mohamedsalahi/sysmon_daemon/internal/telemetry"
 )
 
-type SysmonStats struct {
-	CPU   float64 `json:"cpu"`
-	Mem   int     `json:"mem"`
-	Procs int     `json:"procs"`
-}
+const (
+	defaultListenAddress = ":8080"
+	defaultProcRoot      = "/proc"
+	readHeaderTimeout    = 5 * time.Second
+	requestTimeout       = 10 * time.Second
+	idleTimeout          = 60 * time.Second
+	shutdownTimeout      = 10 * time.Second
+)
 
-func collectTelemetry() SysmonStats {
-	return SysmonStats{
-		CPU:   15.0 + rand.Float64()*10.0,
-		Mem:   4096 + rand.Intn(2048),
-		Procs: 140 + rand.Intn(20),
+func main() {
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	if err := run(logger); err != nil {
+		logger.Error("system telemetry daemon stopped", "error", err)
+		os.Exit(1)
 	}
 }
 
-func handler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
+func run(logger *slog.Logger) error {
+	allowedOrigins, err := api.ParseAllowedOrigins(os.Getenv("SYSMON_ALLOWED_ORIGINS"))
+	if err != nil {
+		return err
+	}
 
-	stats := collectTelemetry()
-	json.NewEncoder(w).Encode(stats)
+	collector := telemetry.NewCollector(environmentOrDefault("SYSMON_PROC_ROOT", defaultProcRoot))
+	handler := api.NewHandler(
+		collector,
+		api.WithAllowedOrigins(allowedOrigins),
+		api.WithLogger(logger),
+	)
+
+	server := &http.Server{
+		Addr:              environmentOrDefault("SYSMON_ADDR", defaultListenAddress),
+		Handler:           handler,
+		ReadHeaderTimeout: readHeaderTimeout,
+		ReadTimeout:       requestTimeout,
+		WriteTimeout:      requestTimeout,
+		IdleTimeout:       idleTimeout,
+		MaxHeaderBytes:    1 << 20,
+	}
+
+	shutdownContext, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	serverErrors := make(chan error, 1)
+	go func() {
+		logger.Info("system telemetry daemon listening", "address", server.Addr)
+		serverErrors <- server.ListenAndServe()
+	}()
+
+	select {
+	case err := <-serverErrors:
+		if errors.Is(err, http.ErrServerClosed) {
+			return nil
+		}
+		return err
+	case <-shutdownContext.Done():
+		logger.Info("shutting down system telemetry daemon")
+	}
+
+	gracefulContext, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := server.Shutdown(gracefulContext); err != nil {
+		return err
+	}
+
+	err = <-serverErrors
+	if errors.Is(err, http.ErrServerClosed) {
+		return nil
+	}
+	return err
 }
 
-func main() {
-	rand.Seed(time.Now().UnixNano())
-
-	http.HandleFunc("/api/sysmon", handler)
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "OK"})
-	})
-
-	port := "8080"
-	fmt.Printf("Sysmon Daemon running on port %s\n", port)
-	fmt.Printf("Telemetry: http://localhost:%s/api/sysmon\n", port)
-	http.ListenAndServe(":"+port, nil)
+func environmentOrDefault(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
 }
