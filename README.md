@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset=".github/banner-dark.svg">
+    <img alt="sysmon_daemon — built from zero" src=".github/banner-light.svg" width="100%">
+  </picture>
+</p>
+
 # Linux System Telemetry Daemon
 
 A foreground Go service that reads Linux `procfs` telemetry and exposes it through a small HTTP API. The service does not generate, estimate, or randomize telemetry: when a required input is missing or malformed, the telemetry endpoint returns an explicit `503` response.
