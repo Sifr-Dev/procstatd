@@ -1,31 +1,29 @@
+// Package handler exposes the JSON HTTP surface for the telemetry daemon.
+// The handler is pure: wire it to a *internal.Telemetry from main.
 package handler
 
 import (
 	"encoding/json"
-	"math/rand"
 	"net/http"
-	"time"
+
+	"github.com/mohamedsalahi/sysmon_daemon/internal"
 )
 
-type SysmonStats struct {
-	CPU   float64 `json:"cpu"`
-	Mem   int     `json:"mem"`
-	Procs int     `json:"procs"`
-}
-
-func Handler(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-
-	// Simulate reading from a Linux /proc filesystem via C daemon
-	rand.Seed(time.Now().UnixNano())
-
-	stats := SysmonStats{
-		CPU:   15.0 + rand.Float64()*10.0,
-		Mem:   4096 + rand.Intn(2048),
-		Procs: 140 + rand.Intn(20),
+func Sysmon(t *internal.Telemetry) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", "GET")
+			http.Error(w, `{"error":"method not allowed"}`, http.StatusMethodNotAllowed)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		stats, err := t.Collect()
+		if err != nil {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(stats)
 	}
-
-	json.NewEncoder(w).Encode(stats)
 }

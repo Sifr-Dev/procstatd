@@ -1,46 +1,40 @@
+// sysmon_daemon — Linux /proc telemetry over HTTP.
+// REAL data only; on read failure the API returns 503 with the reason.
 package main
 
 import (
 	"encoding/json"
 	"fmt"
-	"math/rand"
 	"net/http"
+	"os"
 	"time"
+
+	handler "github.com/mohamedsalahi/sysmon_daemon/api/sysmon"
+	"github.com/mohamedsalahi/sysmon_daemon/internal"
 )
 
-type SysmonStats struct {
-	CPU   float64 `json:"cpu"`
-	Mem   int     `json:"mem"`
-	Procs int     `json:"procs"`
-}
-
-func collectTelemetry() SysmonStats {
-	return SysmonStats{
-		CPU:   15.0 + rand.Float64()*10.0,
-		Mem:   4096 + rand.Intn(2048),
-		Procs: 140 + rand.Intn(20),
-	}
-}
-
-func handler(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Content-Type", "application/json")
-
-	stats := collectTelemetry()
-	json.NewEncoder(w).Encode(stats)
-}
-
 func main() {
-	rand.Seed(time.Now().UnixNano())
+	t := internal.NewTelemetry()
 
-	http.HandleFunc("/api/sysmon", handler)
-	http.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	mux := http.NewServeMux()
+	mux.Handle("/api/sysmon", handler.Sysmon(t))
+	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{"status": "OK"})
+		_ = json.NewEncoder(w).Encode(map[string]string{"status": "ok"})
 	})
 
-	port := "8080"
-	fmt.Printf("Sysmon Daemon running on port %s\n", port)
-	fmt.Printf("Telemetry: http://localhost:%s/api/sysmon\n", port)
-	http.ListenAndServe(":"+port, nil)
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	srv := &http.Server{
+		Addr:              ":" + port,
+		Handler:           mux,
+		ReadHeaderTimeout: 5 * time.Second,
+	}
+	fmt.Printf("sysmon_daemon listening on :%s\n", port)
+	if err := srv.ListenAndServe(); err != nil {
+		fmt.Fprintf(os.Stderr, "fatal: %v\n", err)
+		os.Exit(1)
+	}
 }
