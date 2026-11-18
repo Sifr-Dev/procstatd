@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/sifr-salahy/sysmon_daemon/internal/telemetry"
+	"github.com/Sifr-Dev/sysmon_daemon/internal/telemetry"
 )
 
 const (
