@@ -1,3 +1,3 @@
-module github.com/Sifr-dev/sysmon_daemon
+module github.com/Sifr-Dev/sysmon_daemon
 
 go 1.26.3
