@@ -12,8 +12,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Sifr-Dev/sysmon_daemon/internal/api"
-	"github.com/Sifr-Dev/sysmon_daemon/internal/telemetry"
+	"github.com/Sifr-Dev/procstatd/internal/api"
+	"github.com/Sifr-Dev/procstatd/internal/telemetry"
 )
 
 const (

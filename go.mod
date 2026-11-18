@@ -1,3 +1,3 @@
-module github.com/Sifr-Dev/sysmon_daemon
+module github.com/Sifr-Dev/procstatd
 
 go 1.26.3
