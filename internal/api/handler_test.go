@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mohamedsalahi/sysmon_daemon/internal/telemetry"
+	"github.com/sifr-salahy/sysmon_daemon/internal/telemetry"
 )
 
 type stubCollector struct {
