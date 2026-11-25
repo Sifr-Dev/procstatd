@@ -107,6 +107,29 @@ func TestCollectReportsCounterResetWithoutFabricatingUsage(t *testing.T) {
 	}
 }
 
+func TestCollectReportsBusyCounterDecreaseAsReset(t *testing.T) {
+	root := t.TempDir()
+	writeProcFixtures(t, root, "cpu 100 0 100 100 0 0 0 0\n", 1000, 250, 200, 100, 50)
+	collector := NewCollector(root)
+	if _, err := collector.Collect(); err != nil {
+		t.Fatalf("first Collect() error = %v", err)
+	}
+
+	// Total time increases, but user time moves backwards. The resulting busy
+	// delta cannot be inferred as a valid utilization measurement.
+	writeCPUFixture(t, root, "cpu 50 0 100 300 0 0 0 0\n")
+	second, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("second Collect() error = %v", err)
+	}
+	if second.CPU.Status != CPUStatusReset {
+		t.Fatalf("CPU status = %q, want %q", second.CPU.Status, CPUStatusReset)
+	}
+	if second.CPU.UsagePercent != nil {
+		t.Fatalf("CPU usage = %v, want nil for a backwards busy delta", *second.CPU.UsagePercent)
+	}
+}
+
 func TestCollectRejectsMalformedCPUAndMemory(t *testing.T) {
 	t.Run("CPU", func(t *testing.T) {
 		root := t.TempDir()
