@@ -239,3 +239,40 @@ func TestParseAllowedOriginsRejectsUnsafeValues(t *testing.T) {
 		})
 	}
 }
+
+func TestTelemetryEndpointSerializesNonMeasuringCPUStatuses(t *testing.T) {
+	for _, status := range []string{
+		telemetry.CPUStatusWarmingUp,
+		telemetry.CPUStatusUnchanged,
+		telemetry.CPUStatusReset,
+	} {
+		t.Run(status, func(t *testing.T) {
+			handler := NewHandler(stubCollector{
+				snapshot: telemetry.Snapshot{CPU: telemetry.CPUStats{Status: status}},
+			})
+
+			request := httptest.NewRequest(http.MethodGet, "/api/sysmon", nil)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+
+			if response.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d; body = %s", response.Code, http.StatusOK, response.Body.String())
+			}
+
+			var decoded map[string]any
+			if err := json.Unmarshal(response.Body.Bytes(), &decoded); err != nil {
+				t.Fatalf("decode response: %v", err)
+			}
+			cpu, ok := decoded["cpu"].(map[string]any)
+			if !ok {
+				t.Fatalf("cpu field = %v, want object", decoded["cpu"])
+			}
+			if got := cpu["status"]; got != status {
+				t.Fatalf("cpu.status = %v, want %q", got, status)
+			}
+			if usage, present := cpu["usage_percent"]; !present || usage != nil {
+				t.Fatalf("cpu.usage_percent = %v (present=%v), want explicit null", usage, present)
+			}
+		})
+	}
+}

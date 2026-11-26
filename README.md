@@ -11,7 +11,7 @@ A foreground Go service that reads Linux `procfs` telemetry and exposes it throu
 
 ## What it measures
 
-- **CPU utilization:** the busy-time delta between two successive aggregate `/proc/stat` samples. The first sample has status `warming_up`; a counter reset has status `counter_reset` and does not produce a made-up percentage.
+- **CPU utilization:** the busy-time delta between two successive aggregate `/proc/stat` samples. The first sample has status `warming_up`; identical consecutive counters have status `unchanged`; a counter that moves backwards has status `counter_reset`. None of those statuses produces a made-up percentage.
 - **Memory:** total, available, used, and cache bytes from `/proc/meminfo`. Used memory is `MemTotal - MemAvailable`. Cache bytes are `Buffers + Cached + SReclaimable`.
 - **Processes:** the number of numeric process directories visible under the configured procfs root. A process that disappears or cannot be inspected is skipped without invalidating the whole scan.
 - **System uptime:** seconds from `/proc/uptime`, not daemon-process uptime.
@@ -72,7 +72,13 @@ After at least two CPU samples, a successful response has this shape (the values
 }
 ```
 
-The first successful sample returns `usage_percent: null` and CPU status `warming_up`. A counter reset returns `usage_percent: null` and status `counter_reset`; the next increasing sample can recover without restarting the service.
+The first successful sample returns `usage_percent: null` and CPU status `warming_up`.
+
+Two reads of identical aggregate counters (an idle host, or a cached `/proc/stat` page) return `usage_percent: null` and status `unchanged`. This is an absence of new data, not a component failure, so it is reported separately from `counter_reset`.
+
+A counter reset returns `usage_percent: null` and status `counter_reset`. A reset is a genuine regression: the total or any individual component counter (user, nice, system, idle, I/O wait, IRQ, soft IRQ, or steal) moved backwards. The collector never reuses an invalid delta.
+
+Both `unchanged` and `counter_reset` recover on the next sample whose counters advance; the service does not need a restart.
 
 When required procfs data is unavailable, the endpoint returns a stable error instead of partial or fabricated values:
 
@@ -124,7 +130,7 @@ go tool cover -func=coverage.out
 go build ./...
 ```
 
-The fixture tests cover valid counter deltas, the first sample, counter resets, malformed CPU and memory input, process disappearance/permission errors, exact CORS origins, method restrictions, and collection failures. GitHub Actions runs the same formatting, vet, race, coverage, and build gates on Ubuntu.
+The fixture tests cover valid counter deltas, the first sample, identical (unchanged) counters, partial and negative counter resets, malformed CPU and memory input, process disappearance/permission errors, exact CORS origins, method restrictions, and collection failures. GitHub Actions runs the same formatting, vet, race, coverage, and build gates on Ubuntu for pushes to `main` and for every pull request.
 
 ## Operational limits
 

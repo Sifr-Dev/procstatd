@@ -130,6 +130,154 @@ func TestCollectReportsBusyCounterDecreaseAsReset(t *testing.T) {
 	}
 }
 
+func TestCollectReportsIdenticalCountersAsUnchanged(t *testing.T) {
+	root := t.TempDir()
+	writeProcFixtures(t, root, "cpu 100 10 50 800 20 5 10 5\n", 1000, 250, 200, 100, 50)
+	collector := NewCollector(root)
+
+	if _, err := collector.Collect(); err != nil {
+		t.Fatalf("first Collect() error = %v", err)
+	}
+
+	// A cached or idle procfs read returns byte-identical counters. That is
+	// normal and must not be reported as a component regression.
+	for sample := 1; sample <= 2; sample++ {
+		unchanged, err := collector.Collect()
+		if err != nil {
+			t.Fatalf("unchanged Collect() #%d error = %v", sample, err)
+		}
+		if unchanged.CPU.Status != CPUStatusUnchanged {
+			t.Fatalf("unchanged sample #%d status = %q, want %q", sample, unchanged.CPU.Status, CPUStatusUnchanged)
+		}
+		if unchanged.CPU.UsagePercent != nil {
+			t.Fatalf("unchanged sample #%d usage = %v, want nil", sample, unchanged.CPU.UsagePercent)
+		}
+	}
+
+	// Identical counters must not poison the next advancing sample.
+	writeCPUFixture(t, root, "cpu 150 10 70 900 20 5 10 5\n")
+	advanced, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("advancing Collect() error = %v", err)
+	}
+	if advanced.CPU.Status != CPUStatusAvailable {
+		t.Fatalf("advancing status = %q, want %q", advanced.CPU.Status, CPUStatusAvailable)
+	}
+	if advanced.CPU.UsagePercent == nil {
+		t.Fatal("advancing usage is nil")
+	}
+	wantUsage := 70.0 / 170.0 * 100
+	if math.Abs(*advanced.CPU.UsagePercent-wantUsage) > 0.000001 {
+		t.Fatalf("advancing usage = %f, want %f", *advanced.CPU.UsagePercent, wantUsage)
+	}
+}
+
+func TestCollectReportsAdvancingCountersAsAvailable(t *testing.T) {
+	root := t.TempDir()
+	writeProcFixtures(t, root, "cpu 200 10 100 400 10 5 5 5\n", 1000, 250, 200, 100, 50)
+	collector := NewCollector(root)
+	if _, err := collector.Collect(); err != nil {
+		t.Fatalf("first Collect() error = %v", err)
+	}
+
+	writeCPUFixture(t, root, "cpu 250 10 150 500 10 5 5 5\n")
+	second, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("second Collect() error = %v", err)
+	}
+	if second.CPU.Status != CPUStatusAvailable {
+		t.Fatalf("CPU status = %q, want %q", second.CPU.Status, CPUStatusAvailable)
+	}
+	if second.CPU.UsagePercent == nil {
+		t.Fatal("CPU usage is nil for an advancing counter sample")
+	}
+	// total delta 200, busy delta 100 (idle gained exactly the remaining 100).
+	wantUsage := 100.0 / 200.0 * 100
+	if math.Abs(*second.CPU.UsagePercent-wantUsage) > 0.000001 {
+		t.Fatalf("CPU usage = %f, want %f", *second.CPU.UsagePercent, wantUsage)
+	}
+}
+
+func TestCollectReportsPartialCounterResetAsReset(t *testing.T) {
+	root := t.TempDir()
+	writeProcFixtures(t, root, "cpu 100 10 50 800 20 5 10 5\n", 1000, 250, 200, 100, 50)
+	collector := NewCollector(root)
+	if _, err := collector.Collect(); err != nil {
+		t.Fatalf("first Collect() error = %v", err)
+	}
+
+	// Total time grows and busy time grows, but idle time moves backwards.
+	// A single regressing component is enough to invalidate the delta.
+	writeCPUFixture(t, root, "cpu 1100 10 50 700 20 5 10 5\n")
+	partial, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("partial reset Collect() error = %v", err)
+	}
+	if partial.CPU.Status != CPUStatusReset {
+		t.Fatalf("CPU status = %q, want %q", partial.CPU.Status, CPUStatusReset)
+	}
+	if partial.CPU.UsagePercent != nil {
+		t.Fatalf("CPU usage = %v, want nil after a partial counter reset", partial.CPU.UsagePercent)
+	}
+
+	// The collector must recover from a partial reset once counters advance.
+	writeCPUFixture(t, root, "cpu 1200 10 60 800 20 5 10 5\n")
+	recovered, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("recovered Collect() error = %v", err)
+	}
+	if recovered.CPU.Status != CPUStatusAvailable {
+		t.Fatalf("recovered CPU status = %q, want %q", recovered.CPU.Status, CPUStatusAvailable)
+	}
+}
+
+func TestCollectReportsNegativeComponentDeltaAsReset(t *testing.T) {
+	root := t.TempDir()
+	writeProcFixtures(t, root, "cpu 200 10 100 400 10 5 5 5\n", 1000, 250, 200, 100, 50)
+	collector := NewCollector(root)
+	if _, err := collector.Collect(); err != nil {
+		t.Fatalf("first Collect() error = %v", err)
+	}
+
+	// Total and busy time both grow, but user time shrinks: the per-component
+	// delta is negative even though the aggregate looks healthy.
+	writeCPUFixture(t, root, "cpu 150 10 200 800 10 5 5 5\n")
+	negative, err := collector.Collect()
+	if err != nil {
+		t.Fatalf("negative delta Collect() error = %v", err)
+	}
+	if negative.CPU.Status != CPUStatusReset {
+		t.Fatalf("CPU status = %q, want %q", negative.CPU.Status, CPUStatusReset)
+	}
+	if negative.CPU.UsagePercent != nil {
+		t.Fatalf("CPU usage = %v, want nil after a negative component delta", negative.CPU.UsagePercent)
+	}
+}
+
+func TestCountersResetClassification(t *testing.T) {
+	base := cpuCounters{user: 100, nice: 10, system: 50, idle: 800, ioWait: 20, irq: 5, softIRQ: 10, steal: 5}
+
+	cases := []struct {
+		name      string
+		current   cpuCounters
+		wantReset bool
+	}{
+		{name: "identical", current: base, wantReset: false},
+		{name: "advancing", current: cpuCounters{user: 150, nice: 10, system: 70, idle: 900, ioWait: 20, irq: 5, softIRQ: 10, steal: 5}, wantReset: false},
+		{name: "total moves backwards", current: cpuCounters{user: 10, nice: 1, system: 5, idle: 80, ioWait: 2, irq: 0, softIRQ: 1, steal: 0}, wantReset: true},
+		{name: "single component backwards", current: cpuCounters{user: 100, nice: 10, system: 50, idle: 700, ioWait: 20, irq: 5, softIRQ: 10, steal: 5}, wantReset: true},
+		{name: "negative user delta with growing total", current: cpuCounters{user: 50, nice: 10, system: 200, idle: 800, ioWait: 20, irq: 5, softIRQ: 10, steal: 5}, wantReset: true},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := countersReset(base, testCase.current); got != testCase.wantReset {
+				t.Fatalf("countersReset() = %v, want %v", got, testCase.wantReset)
+			}
+		})
+	}
+}
+
 func TestCollectRejectsMalformedCPUAndMemory(t *testing.T) {
 	t.Run("CPU", func(t *testing.T) {
 		root := t.TempDir()
