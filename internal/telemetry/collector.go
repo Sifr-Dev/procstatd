@@ -17,6 +17,7 @@ import (
 const (
 	CPUStatusAvailable  = "available"
 	CPUStatusWarmingUp  = "warming_up"
+	CPUStatusUnchanged  = "unchanged"
 	CPUStatusReset      = "counter_reset"
 	defaultProcRoot     = "/proc"
 	cacheBytesPerKiB    = uint64(1024)
@@ -25,9 +26,11 @@ const (
 
 // Snapshot is one coherent observation of the local Linux system.
 //
-// CPU usage is a delta between two aggregate counter samples. It is nil and
-// has status warming_up for the first sample, or counter_reset when the
-// kernel counters move backwards. Memory values are bytes, not rounded MiB.
+// CPU usage is a delta between two aggregate counter samples. It is nil when
+// no utilization can be measured: warming_up for the first sample, unchanged
+// when every aggregate counter is identical between two samples (idle or
+// cached procfs data, not a reset), or counter_reset when a counter moves
+// backwards. Memory values are bytes, not rounded MiB.
 type Snapshot struct {
 	CPU                 CPUStats    `json:"cpu"`
 	Memory              MemoryStats `json:"memory"`
@@ -37,8 +40,10 @@ type Snapshot struct {
 }
 
 // CPUStats describes current aggregate CPU utilization. UsagePercent is a
-// percentage from 0 through 100 and is unavailable until two valid samples
-// have been observed.
+// percentage from 0 through 100 and is nil in every non-measuring status:
+// warming_up (one sample), unchanged (identical consecutive counters), and
+// counter_reset (a counter moved backwards). Status is one of those three
+// values or available.
 type CPUStats struct {
 	UsagePercent *float64 `json:"usage_percent"`
 	Status       string   `json:"status"`
@@ -151,13 +156,19 @@ func (c *Collector) cpuUtilization(current cpuCounters) (CPUStats, error) {
 	copy := current
 	c.previous = &copy
 
+	// A counter that moves backwards is a genuine component regression: the
+	// kernel restarted, a CPU hotplug removed time, or the sample is
+	// incoherent. Report it as a reset and never reuse the invalid delta.
 	if countersReset(previous, current) {
 		return CPUStats{Status: CPUStatusReset}, nil
 	}
 
+	// Identical counters are normal: an idle host can serve the same cached
+	// procfs page twice, and no time elapsed between the two reads. This is
+	// not a reset because nothing moved backwards.
 	totalDelta := current.total() - previous.total()
 	if totalDelta == 0 {
-		return CPUStats{Status: CPUStatusReset}, nil
+		return CPUStats{Status: CPUStatusUnchanged}, nil
 	}
 
 	busyDelta := current.busy() - previous.busy()
