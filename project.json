@@ -1,0 +1,9 @@
+{
+  "name": "procstatd",
+  "description": "Linux /proc telemetry daemon",
+  "stack": [
+    "go"
+  ],
+  "status": "active",
+  "primary_language": "Go"
+}
